@@ -80,9 +80,9 @@ log_step()    { echo -e "\n${CYAN}═══════════════�
 read_secret() {
     local description="$1" varname="$2" val1 val2
     while true; do
-        read -sp "  ${description}: " val1; echo
+        read -rsp "  ${description}: " val1; echo
         [[ -z "$val1" ]] && echo -e "  ${RED}Darf nicht leer sein!${NC}" && continue
-        read -sp "  ${description} (Bestätigung): " val2; echo
+        read -rsp "  ${description} (Bestätigung): " val2; echo
         [[ "$val1" == "$val2" ]] && { printf -v "$varname" '%s' "$val1"; break; }
         echo -e "  ${RED}Eingaben stimmen nicht überein.${NC}"
     done
@@ -106,7 +106,7 @@ select_setup_language() {
     echo "║  2) English                          ║"
     echo "╚══════════════════════════════════════╝"
     echo ""
-    read -p " Auswahl / Choice [1]: " _lang
+    read -rp " Auswahl / Choice [1]: " _lang
     case "${_lang:-1}" in
         2) SETUP_LANG="en" ;;
         *) SETUP_LANG="de" ;;
@@ -261,7 +261,9 @@ collect_nextcloud() {
     test_result=$(curl -sf -u "${NC_USER}:${NC_PASS}" \
         "${NC_URL}/remote.php/dav/files/${NC_USER}/" \
         -X PROPFIND -H "Depth: 0" 2>&1)
-    if [[ $? -ne 0 ]] || echo "$test_result" | grep -qi "Unauthorized\|403\|401"; then
+    if ! curl -sf -u "${NC_USER}:${NC_PASS}" \
+        "${NC_URL}/remote.php/dav/files/${NC_USER}/" \
+        -X PROPFIND -H "Depth: 0" 2>&1 | grep -qi "Unauthorized\|403\|401"; then
         log_warning "$(t "Verbindungstest fehlgeschlagen — trotzdem fortfahren?" "Connection test failed — continue anyway?") (j/n)"
         read -p "  " _cont
         [[ ! "$_cont" =~ ^[Jj]$ ]] && { log_error "$(t "Nextcloud abgebrochen." "Nextcloud canceled.")"; }
@@ -472,7 +474,7 @@ phase3_data_dir() {
     log_step "Phase 3: Data-Verzeichnis"
     mkdir -p "${NANOBOT_DATA_DIR}"/{memory,workspace,workspace/memory,logs,skills,backups,redis,qdrant}
     mkdir -p /opt/nanobot/build
-    if   [ -L /root/.nanobot ]; then log_info "~/.nanobot Symlink existiert."
+    if   [ -L /root/.nanobot ]; then log_info "\$HOME/.nanobot Symlink existiert."
     elif [ -d /root/.nanobot ]; then mv /root/.nanobot /root/.nanobot.bak; ln -s "$NANOBOT_DATA_DIR" /root/.nanobot
     else ln -s "$NANOBOT_DATA_DIR" /root/.nanobot
     fi
@@ -549,43 +551,27 @@ phase4_nanobot_config() {
     \"watchFolders\": ${folders_json}
   }"
     fi
+    if [[ "$USE_MATRIX" =~ ^[JjYy]$ ]]; then
+        local rooms_json="[]"
+        local e2ee_val="false"
+        [[ "$MATRIX_E2EE" =~ ^[JjYy]$ ]] && e2ee_val="true"
+        local matrix_block=""
+        if [[ -n "$MATRIX_ALLOW_ROOMS" ]]; then
+            local _py_tmp; _py_tmp=$(mktemp /tmp/nanobot_XXXXXX.py)
+            cat > "$_py_tmp" << 'PYEOF'
+import json, sys
+rooms = [r.strip() for r in sys.argv[1].split(',') if r.strip()]
+print(json.dumps(rooms))
+PYEOF
+            rooms_json=$(python3 "$_py_tmp" "$MATRIX_ALLOW_ROOMS" 2>/dev/null) || rooms_json="[]"
+            rm -f "$_py_tmp"
+        fi
+         matrix_block=$(printf ',\n    "matrix": {\n      "enabled": true,\n      "homeserver": "%s",\n      "user_id": "%s",\n      "access_token": "%s",\n      "roomPolicy": "%s",\n      "allowFrom": ["%s"],\n      "allowRooms": %s,\n      "e2ee": %s\n    }' \
+            "$MATRIX_HOMESERVER" "$MATRIX_USER_ID" "$MATRIX_TOKEN" \
+            "$MATRIX_ROOM_POLICY" "$MATRIX_USER_ID" "$rooms_json" "$e2ee_val")
+    fi
 
-    printf '{
-  "providers": {
-    %b
-  },
-  "agents": {
-    "defaults": {
-      "model": "%s",
-      "systemPrompt": "Lies beim Start IMMER zuerst: SOUL.md, USER.md, memory/MEMORY.md im Workspace %s/workspace/. Antworte auf %s, präzise. Beende JEDE Interaktion mit vollständigem Text — niemals leer antworten. E-Mails: python3 %s/workspace/emails.py. Modell wechseln: bash %s/workspace/switch-model.sh."
-    }
-  },
-  "channels": {
-    "email": {
-      "enabled": true,
-      "consentGranted": true,
-      "imapHost": "%s",
-      "imapPort": %s,
-      "imapUsername": "%s",
-      "imapPassword": "%s",
-      "smtpHost": "%s",
-      "smtpPort": %s,
-      "smtpUsername": "%s",
-      "smtpPassword": "%s",
-      "fromAddress": "%s",
-      "allowFrom": ["%s"]
-    },
-    "telegram": {
-      "enabled": true,
-      "token": "%s",
-      "allowFrom": ["%s"]
-    }
-  },
-  "gateway": { "host": "0.0.0.0", "port": 18790 },
-  "tools": {
-    %b
-  }%s
-}\n' \
+    printf '{\n  "providers": {\n    %b\n  },\n  "agents": {\n    "defaults": {\n      "model": "%s",\n      "systemPrompt": "Lies beim Start IMMER zuerst: SOUL.md, USER.md, memory/MEMORY.md im Workspace %s/workspace/. Antworte auf %s, präzise. Beende JEDE Interaktion mit vollständigem Text — niemals leer antworten. E-Mails: python3 %s/workspace/emails.py. Modell wechseln: bash %s/workspace/switch-model.sh."\n    }\n  },\n  "channels": {\n    "email": {\n      "enabled": true,\n      "consentGranted": true,\n      "imapHost": "%s",\n      "imapPort": %s,\n      "imapUsername": "%s",\n      "imapPassword": "%s",\n      "smtpHost": "%s",\n      "smtpPort": %s,\n      "smtpUsername": "%s",\n      "smtpPassword": "%s",\n      "fromAddress": "%s",\n      "allowFrom": ["%s"]\n    },\n    "telegram": {\n      "enabled": true,\n      "token": "%s",\n      "allowFrom": ["%s"]\n    }%s\n  },\n  "gateway": { "host": "0.0.0.0", "port": 18790 },\n  "tools": {\n    %b\n  }%s\n}\n' \
         "$providers_block" \
         "$NANOBOT_MODEL" \
         "$NANOBOT_CONTAINER_DIR" "$ONBOARD_LANG" "$NANOBOT_CONTAINER_DIR" "$NANOBOT_CONTAINER_DIR" \
@@ -593,6 +579,7 @@ phase4_nanobot_config() {
         "$SMTP_HOST" "$SMTP_PORT" "$EMAIL_USER" "$EMAIL_PASS" \
         "$EMAIL_USER" "$EMAIL_USER" \
         "$TELEGRAM_TOKEN" "$TELEGRAM_USER_ID" \
+        "$matrix_block" \
         "$tools_block" \
         "$nc_block" \
         > "${NANOBOT_DATA_DIR}/config.json"
