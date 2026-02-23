@@ -1,7 +1,12 @@
 #!/bin/bash
 # ============================================================================
 # Nanobot KI-Agenten Setup
-# Version: 2.9.5
+# Version: 3.0.0 (Phase 1: Language Selection)
+# Änderungen v3.0.0:
+#   - NEU: select_setup_language() — interaktive Sprachauswahl (DE/EN)
+#   - NEU: t() Helper-Funktion für translations-unabhängige Prompts
+#   - Alle Phase-0-Funktionen (collect_nextcloud, collect_onboarding, collect_credentials) internationalisiert
+#   - Version 3.0.0 Banner in show_summary
 # Änderungen v2.9.5:
 #   - BUGFIX: Qdrant Healthcheck: kein wget/curl im Image → bash /dev/tcp TCP-Connect
 #   - BUGFIX: Redis Healthcheck: CMD (exec) → CMD-SHELL (sh im Container, LXC-safe)
@@ -52,6 +57,10 @@ OPENROUTER_KEY="" ; PERPLEXITY_KEY="" ; USE_PERPLEXITY=""
 BRAVE_KEY="" ; USE_BRAVE=""
 EMAIL_USER="" ; EMAIL_PASS=""
 TELEGRAM_TOKEN="" ; TELEGRAM_USER_ID=""
+
+# Sprache (NEU — implementiert in v3.0.0)
+SETUP_LANG="de"   # de | en
+
 NANOBOT_DATA_DIR="/opt/nanobot/data"        # Host-Pfad
 NANOBOT_CONTAINER_DIR="/root/.nanobot"          # Container-Pfad
 SKIP_TAILSCALE=false ; USE_LOCAL_BUILD=false ; RESUME_FROM=0
@@ -77,6 +86,31 @@ read_secret() {
         [[ "$val1" == "$val2" ]] && { printf -v "$varname" '%s' "$val1"; break; }
         echo -e "  ${RED}Eingaben stimmen nicht überein.${NC}"
     done
+}
+
+# ============================================================================
+# SPRACHAUSWAHL (NEU — v3.0.0)
+# ============================================================================
+
+t() {
+    local de="$1" en="$2"
+    [[ "$SETUP_LANG" == "en" ]] && echo "$en" || echo "$de"
+}
+
+select_setup_language() {
+    echo ""
+    echo "╔══════════════════════════════════════╗"
+    echo "║  Nanobot Setup — Sprache / Language  ║"
+    echo "╠══════════════════════════════════════╣"
+    echo "║  1) Deutsch                          ║"
+    echo "║  2) English                          ║"
+    echo "╚══════════════════════════════════════╝"
+    echo ""
+    read -p " Auswahl / Choice [1]: " _lang
+    case "${_lang:-1}" in
+        2) SETUP_LANG="en" ;;
+        *) SETUP_LANG="de" ;;
+    esac
 }
 
 # ============================================================================
@@ -201,42 +235,42 @@ PYEOF
 # PHASE 0c: NEXTCLOUD ONBOARDING
 # ============================================================================
 collect_nextcloud() {
-    log_step "Phase 0c: Nextcloud-Integration (optional)"
+    log_step "$(t "Phase 0c: Nextcloud-Integration (optional)" "Phase 0c: Nextcloud Integration (optional)")"
     echo ""
-    read -p "  Nextcloud verwenden? Obsidian Vault + Dokumente indizieren (j/n): " USE_NEXTCLOUD
-    [[ ! "$USE_NEXTCLOUD" =~ ^[Jj]$ ]] && { log_info "Nextcloud übersprungen."; return; }
+    read -p "  $(t "Nextcloud verwenden? Obsidian Vault + Dokumente indizieren" "Use Nextcloud? Obsidian Vault + index documents") (j/n): " USE_NEXTCLOUD
+    [[ ! "$USE_NEXTCLOUD" =~ ^[Jj]$ ]] && { log_info "$(t "Nextcloud übersprungen." "Nextcloud skipped.")"; return; }
 
     echo ""
-    log_info "Nextcloud-Zugangsdaten"
-    echo -e "  ${YELLOW}Tipp: Nutze ein App-Passwort (Nextcloud → Einstellungen → Sicherheit)${NC}"
-    echo -e "  ${YELLOW}      NICHT dein Login-Passwort!${NC}"
+    log_info "$(t "Nextcloud-Zugangsdaten" "Nextcloud credentials")"
+    echo -e "  ${YELLOW}$(t "Tipp: Nutze ein App-Passwort (Nextcloud → Einstellungen → Sicherheit)" "Tip: Use an App Password (Nextcloud → Settings → Security")${NC}"
+    echo -e "  ${YELLOW}      $(t "NICHT dein Login-Passwort!" "DO NOT use your login password!")${NC}"
     echo ""
     while true; do
-        read -p "  Nextcloud URL (z.B. https://cloud.example.com): " NC_URL
+        read -p "  $(t "Nextcloud URL (z.B. https://cloud.example.com):" "Nextcloud URL (e.g. https://cloud.example.com):") " NC_URL
         NC_URL="${NC_URL%/}"   # trailing slash entfernen
         [[ "$NC_URL" =~ ^https?:// ]] && break
-        echo -e "  ${RED}Muss mit http:// oder https:// beginnen!${NC}"
+        echo -e "  ${RED}$(t "Muss mit http:// oder https:// beginnen!" "Must start with http:// or https://!")${NC}"
     done
-    read -p "  Nextcloud Benutzername: " NC_USER
-    [[ -z "$NC_USER" ]] && log_error "Benutzername darf nicht leer sein!"
+    read -p "  $(t "Nextcloud Benutzername:" "Nextcloud username:") " NC_USER
+    [[ -z "$NC_USER" ]] && log_error "$(t "Benutzername darf nicht leer sein!" "Username cannot be empty!")"
     read_secret "Nextcloud App-Passwort" NC_PASS
 
     echo ""
-    log_info "Verbindungstest läuft..."
+    log_info "$(t "Verbindungstest läuft..." "Testing connection...")"
     local test_result
     test_result=$(curl -sf -u "${NC_USER}:${NC_PASS}" \
         "${NC_URL}/remote.php/dav/files/${NC_USER}/" \
         -X PROPFIND -H "Depth: 0" 2>&1)
     if [[ $? -ne 0 ]] || echo "$test_result" | grep -qi "Unauthorized\|403\|401"; then
-        log_warning "Verbindungstest fehlgeschlagen — trotzdem fortfahren? (j/n)"
+        log_warning "$(t "Verbindungstest fehlgeschlagen — trotzdem fortfahren?" "Connection test failed — continue anyway?") (j/n)"
         read -p "  " _cont
-        [[ ! "$_cont" =~ ^[Jj]$ ]] && { log_error "Nextcloud abgebrochen."; }
+        [[ ! "$_cont" =~ ^[Jj]$ ]] && { log_error "$(t "Nextcloud abgebrochen." "Nextcloud canceled.")"; }
     else
-        log_success "Nextcloud Verbindung OK ✓"
+        log_success "$(t "Nextcloud Verbindung OK ✓" "Nextcloud connection OK ✓")"
     fi
 
     echo ""
-    log_info "Verfügbare Ordner auf deiner Nextcloud:"
+    log_info "$(t "Verfügbare Ordner auf deiner Nextcloud:" "Available folders on your Nextcloud:")"
     local folder_list
     local _py_tmp; _py_tmp=$(mktemp /tmp/nanobot_XXXXXX.py)
     cat > "$_py_tmp" << 'PYEOF'
@@ -261,28 +295,28 @@ PYEOF
     if [[ -n "$folder_list" ]]; then
         echo "$folder_list"
     else
-        echo -e "  ${YELLOW}Ordner konnten nicht automatisch abgerufen werden.${NC}"
-        echo -e "  Gib die Ordner manuell ein."
+        echo -e "  ${YELLOW}$(t "Ordner konnten nicht automatisch abgerufen werden." "Folders could not be automatically retrieved.")${NC}"
+        echo -e "  $(t "Gib die Ordner manuell ein." "Please enter folders manually.")"
     fi
 
     echo ""
-    log_info "Welche Ordner soll der Agent überwachen und indizieren?"
-    echo -e "  ${YELLOW}Format: /OrdnerName/ (mit führendem und abschließendem Slash)${NC}"
-    echo -e "  ${YELLOW}ENTER ohne Eingabe = Fertig${NC}"
+    log_info "$(t "Welche Ordner soll der Agent überwachen und indizieren?" "Which folders should the agent monitor and index?")"
+    echo -e "  ${YELLOW}$(t "Format: /OrdnerName/ (mit führendem und abschließendem Slash)" "Format: /FolderName/ (with leading and trailing slash")${NC}"
+    echo -e "  ${YELLOW}$(t "ENTER ohne Eingabe = Fertig" "ENTER without input = Done")${NC}"
     echo ""
     NC_FOLDERS=()
     while true; do
-        read -p "  Ordner hinzufügen (oder ENTER zum Beenden): " _folder
+        read -p "  $(t "Ordner hinzufügen (oder ENTER zum Beenden):" "Add folder (or ENTER to finish):") " _folder
         [[ -z "$_folder" ]] && break
         # Slash sicherstellen
         [[ "$_folder" != /* ]]  && _folder="/$_folder"
         [[ "$_folder" != */ ]]  && _folder="$_folder/"
         NC_FOLDERS+=("$_folder")
-        echo -e "  ${GREEN}✓${NC} ${_folder} hinzugefügt"
+        echo -e "  ${GREEN}✓${NC} ${_folder} $(t "hinzugefügt" "added")"
     done
 
     if [[ ${#NC_FOLDERS[@]} -eq 0 ]]; then
-        log_warning "Keine Ordner gewählt — Nextcloud wird deaktiviert."
+        log_warning "$(t "Keine Ordner gewählt — Nextcloud wird deaktiviert." "No folders selected — Nextcloud will be disabled.")"
         USE_NEXTCLOUD="n"
         return
     fi
@@ -306,87 +340,87 @@ PYEOF
 # PHASE 0b: AGENT ONBOARDING
 # ============================================================================
 collect_onboarding() {
-    log_step "Phase 0b: Agent-Onboarding"
+    log_step "$(t "Phase 0b: Agent-Onboarding" "Phase 0b: Agent Onboarding")"
     echo ""
-    echo -e "  ${CYAN}Diese Daten personalisieren deinen KI-Agenten.${NC}"
+    echo -e "  ${CYAN}$(t "Diese Daten personalisieren deinen KI-Agenten." "These data personalize your KI agent.")${NC}"
     echo ""
-    log_info "Dein Nutzerprofil (USER.md)"
+    log_info "$(t "Dein Nutzerprofil (USER.md)" "Your user profile (USER.md)")"
     echo ""
-    read -p "  Dein vollständiger Name: " ONBOARD_NAME
-    [[ -z "$ONBOARD_NAME" ]] && ONBOARD_NAME="Unbekannt"
-    read -p "  Dein Wohnort (Stadt): " ONBOARD_CITY
-    [[ -z "$ONBOARD_CITY" ]] && ONBOARD_CITY="Unbekannt"
-    read -p "  Dein Telegram-Nutzername (ohne @): " ONBOARD_TG_NAME
+    read -p "  $(t "Dein vollständiger Name:" "Your full name:") " ONBOARD_NAME
+    [[ -z "$ONBOARD_NAME" ]] && ONBOARD_NAME="$(t "Unbekannt" "Unknown")"
+    read -p "  $(t "Dein Wohnort (Stadt):" "Your city:") " ONBOARD_CITY
+    [[ -z "$ONBOARD_CITY" ]] && ONBOARD_CITY="$(t "Unbekannt" "Unknown")"
+    read -p "  $(t "Dein Telegram-Nutzername (ohne @):" "Your Telegram username (without @):") " ONBOARD_TG_NAME
     [[ -z "$ONBOARD_TG_NAME" ]] && ONBOARD_TG_NAME="User"
     echo ""
-    echo -e "  ${YELLOW}Homelab-Beschreibung:${NC}"
-    read -p "  Dein Homelab: " ONBOARD_HOMELAB
-    [[ -z "$ONBOARD_HOMELAB" ]] && ONBOARD_HOMELAB="Linux Server"
+    echo -e "  ${YELLOW}$(t "Homelab-Beschreibung:" "Homelab description:")${NC}"
+    read -p "  $(t "Dein Homelab:" "Your homelab:") " ONBOARD_HOMELAB
+    [[ -z "$ONBOARD_HOMELAB" ]] && ONBOARD_HOMELAB="$(t "Linux Server" "Linux Server")"
     echo ""
-    echo -e "  ${YELLOW}Technische Interessen (kommagetrennt):${NC}"
-    read -p "  Interessen: " ONBOARD_INTERESTS
-    [[ -z "$ONBOARD_INTERESTS" ]] && ONBOARD_INTERESTS="IT, Linux, KI"
-    read -p "  Bevorzugte Antwortsprache [Deutsch]: " ONBOARD_LANG
-    [[ -z "$ONBOARD_LANG" ]] && ONBOARD_LANG="Deutsch"
+    echo -e "  ${YELLOW}$(t "Technische Interessen (kommagetrennt):" "Technical interests (comma-separated:")${NC}"
+    read -p "  $(t "Interessen:" "Interests:") " ONBOARD_INTERESTS
+    [[ -z "$ONBOARD_INTERESTS" ]] && ONBOARD_INTERESTS="$(t "IT, Linux, KI" "IT, Linux, AI")"
+    read -p "  $(t "Bevorzugte Antwortsprache [Deutsch]: " "Preferred response language [German]:") " ONBOARD_LANG
+    [[ -z "$ONBOARD_LANG" ]] && ONBOARD_LANG="$(t "Deutsch" "German")"
     echo ""
-    log_info "Agent-Persönlichkeit (SOUL.md)"
+    log_info "$(t "Agent-Persönlichkeit (SOUL.md)" "Agent personality (SOUL.md)")"
     echo ""
-    read -p "  Name des Agenten: " ONBOARD_BOT_NAME
-    [[ -z "$ONBOARD_BOT_NAME" ]] && ONBOARD_BOT_NAME="NanobotAgent"
+    read -p "  $(t "Name des Agenten:" "Name of the agent:") " ONBOARD_BOT_NAME
+    [[ -z "$ONBOARD_BOT_NAME" ]] && ONBOARD_BOT_NAME="$(t "NanobotAgent" "NanobotAgent")"
     echo ""
-    echo -e "  1) Direkt & technisch ${CYAN}← empfohlen${NC}"
-    echo -e "  2) Freundlich & ausführlich"
-    echo -e "  3) Minimalistisch (nur Fakten)"
-    read -p "  Wahl [1]: " _p
+    echo -e "  1) $(t "Direkt & technisch" "Direct & technical") ${CYAN}← $(t "empfohlen" "recommended")${NC}"
+    echo -e "  2) $(t "Freundlich & ausführlich" "Friendly & detailed")"
+    echo -e "  3) $(t "Minimalistisch (nur Fakten)" "Minimalist (only facts)")"
+    read -p "  $(t "Wahl [1]:" "Choice [1]:") " _p
     case "${_p:-1}" in
-        2) ONBOARD_STYLE="Ich bin freundlich, ausführlich und erkläre Dinge gerne im Detail."
-           ONBOARD_STYLE_SHORT="freundlich, ausführlich, erklärend" ;;
-        3) ONBOARD_STYLE="Ich antworte nur mit Fakten — keine Erklärungen, keine Höflichkeiten."
-           ONBOARD_STYLE_SHORT="minimalistisch, nur Fakten" ;;
-        *) ONBOARD_STYLE="Ich bin direkt, präzise und technisch — kein unnötiges Gerede."
-           ONBOARD_STYLE_SHORT="direkt, präzise, technisch" ;;
+        2) ONBOARD_STYLE="$(t "Ich bin freundlich, ausführlich und erkläre Dinge gerne im Detail." "I am friendly, detailed and I like to explain things in detail.")"
+            ONBOARD_STYLE_SHORT="$(t "freundlich, ausführlich, erklärend" "friendly, detailed, explaining")" ;;
+        3) ONBOARD_STYLE="$(t "Ich antworte nur mit Fakten — keine Erklärungen, keine Höflichkeiten." "I only answer with facts — no explanations, no politeness.")"
+            ONBOARD_STYLE_SHORT="$(t "minimalistisch, nur Fakten" "minimalist, only facts")" ;;
+        *) ONBOARD_STYLE="$(t "Ich bin direkt, präzise und technisch — kein unnötiges Gerede." "I am direct, precise and technical — no unnecessary chatter.")"
+            ONBOARD_STYLE_SHORT="$(t "direkt, präzise, technisch" "direct, precise, technical")" ;;
     esac
     echo ""
-    read -p "  Proaktive Alerts (CVEs, dringende Mails)? (j/n) [j]: " _pa
+    read -p "  $(t "Proaktive Alerts (CVEs, dringende Mails)? (j/n) [j]: " "Proactive alerts (CVEs, urgent emails)? (y/n) [y]:") " _pa
     [[ "${_pa:-j}" =~ ^[Jj]$ ]] \
-        && ONBOARD_PROACTIVE_TEXT="Ich bin proaktiv: CVEs >= 9.0 und dringende Mails melde ich sofort per Telegram." \
-        || ONBOARD_PROACTIVE_TEXT="Ich antworte nur auf direkte Anfragen."
-    log_success "Onboarding-Daten eingelesen."
+        && ONBOARD_PROACTIVE_TEXT="$(t "Ich bin proaktiv: CVEs >= 9.0 und dringende Mails melde ich sofort per Telegram." "I am proactive: CVEs >= 9.0 and urgent emails I report immediately via Telegram.")" \
+        || ONBOARD_PROACTIVE_TEXT="$(t "Ich antworte nur auf direkte Anfragen." "I only answer direct requests.")"
+    log_success "$(t "Onboarding-Daten eingelesen." "Onboarding data read.")"
 }
 
 # ============================================================================
 # PHASE 0: CREDENTIALS
 # ============================================================================
 collect_credentials() {
-    log_step "Phase 0: Zugangsdaten & Konfiguration"
-    echo ""; log_warning "Alle Secrets werden zweimal abgefragt und NICHT geloggt."; echo ""
-    read -p "  Zeitzone  [${DEFAULT_TIMEZONE}]: " _in; TIMEZONE="${_in:-$DEFAULT_TIMEZONE}"
-    read -p "  Locale    [${DEFAULT_LOCALE}]: "   _in; LOCALE="${_in:-$DEFAULT_LOCALE}"
+    log_step "$(t "Phase 0: Zugangsdaten & Konfiguration" "Phase 0: Credentials & Configuration")"
+    echo ""; log_warning "$(t "Alle Secrets werden zweimal abgefragt und NICHT geloggt." "All secrets will be asked twice and NOT logged.")"; echo ""
+    read -p "  $(t "Zeitzone" "Timezone")  [${DEFAULT_TIMEZONE}]: " _in; TIMEZONE="${_in:-$DEFAULT_TIMEZONE}"
+    read -p "  $(t "Locale" "Locale")    [${DEFAULT_LOCALE}]: "   _in; LOCALE="${_in:-$DEFAULT_LOCALE}"
     echo ""
-    log_info "OpenRouter API Key  →  https://openrouter.ai/settings/keys"
-    read_secret "OpenRouter API Key (sk-or-v1-...)" OPENROUTER_KEY
-    select_free_model || log_warning "Modell-Auswahl fehlgeschlagen – Fallback: ${NANOBOT_MODEL}"
+    log_info "$(t "OpenRouter API Key" "OpenRouter API Key")  →  https://openrouter.ai/settings/keys"
+    read_secret "$(t "OpenRouter API Key (sk-or-v1-...)" "OpenRouter API Key (sk-or-v1-...)")" OPENROUTER_KEY
+    select_free_model || log_warning "$(t "Modell-Auswahl fehlgeschlagen — Fallback: ${NANOBOT_MODEL}" "Model selection failed — fallback: ${NANOBOT_MODEL}")"
     echo ""
-    read -p "  NVIDIA NIM verwenden? (j/n): " USE_NVIDIA
-    [[ "$USE_NVIDIA" =~ ^[Jj]$ ]] && { read_secret "NVIDIA API Key (nvapi-...)" NVIDIA_KEY; select_nvidia_model; }
-    echo ""; read -p "  Perplexity verwenden? (j/n): " USE_PERPLEXITY
-    [[ "$USE_PERPLEXITY" =~ ^[Jj]$ ]] && read_secret "Perplexity API Key (pplx-...)" PERPLEXITY_KEY
-    echo ""; read -p "  Brave Search verwenden? (j/n): " USE_BRAVE
-    [[ "$USE_BRAVE" =~ ^[Jj]$ ]] && read_secret "Brave Search API Key" BRAVE_KEY
+    read -p "  $(t "NVIDIA NIM verwenden?" "Use NVIDIA NIM?") (j/n): " USE_NVIDIA
+    [[ "$USE_NVIDIA" =~ ^[Jj]$ ]] && { read_secret "$(t "NVIDIA API Key (nvapi-...)" "NVIDIA API Key (nvapi-...)")" NVIDIA_KEY; select_nvidia_model; }
+    echo ""; read -p "  $(t "Perplexity verwenden?" "Use Perplexity?") (j/n): " USE_PERPLEXITY
+    [[ "$USE_PERPLEXITY" =~ ^[Jj]$ ]] && read_secret "$(t "Perplexity API Key (pplx-...)" "Perplexity API Key (pplx-...)")" PERPLEXITY_KEY
+    echo ""; read -p "  $(t "Brave Search verwenden?" "Use Brave Search?") (j/n): " USE_BRAVE
+    [[ "$USE_BRAVE" =~ ^[Jj]$ ]] && read_secret "$(t "Brave Search API Key" "Brave Search API Key")" BRAVE_KEY
     echo ""
-    read -p "  E-Mail-Adresse: " EMAIL_USER
-    [[ -z "$EMAIL_USER" ]] && log_error "E-Mail darf nicht leer sein!"
-    log_info "IMAP-Zugangsdaten"
-    while true; do read -p "  IMAP Host: " IMAP_HOST; [[ -n "$IMAP_HOST" ]] && break; echo -e "  ${RED}Darf nicht leer sein!${NC}"; done
-    read -p "  IMAP Port [${DEFAULT_IMAP_PORT}]: " _in; IMAP_PORT="${_in:-$DEFAULT_IMAP_PORT}"
-    read -p "  SMTP Host [ENTER=${IMAP_HOST}]: " _in; SMTP_HOST="${_in:-$IMAP_HOST}"
-    read -p "  SMTP Port [${DEFAULT_SMTP_PORT}]: " _in; SMTP_PORT="${_in:-$DEFAULT_SMTP_PORT}"
-    read_secret "E-Mail Passwort" EMAIL_PASS
-    echo ""; read_secret "Telegram Bot Token" TELEGRAM_TOKEN
-    read -p "  Telegram User-ID (Zahl): " TELEGRAM_USER_ID
-    [[ -z "$TELEGRAM_USER_ID" ]]            && log_error "Telegram User-ID leer!"
-    [[ ! "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] && log_error "Muss eine Zahl sein!"
-    echo ""; log_success "Zugangsdaten eingelesen."
+    read -p "  $(t "E-Mail-Adresse" "Email address"): " EMAIL_USER
+    [[ -z "$EMAIL_USER" ]] && log_error "$(t "E-Mail darf nicht leer sein!" "Email cannot be empty!")"
+    log_info "$(t "IMAP-Zugangsdaten" "IMAP credentials")"
+    while true; do read -p "  $(t "IMAP Host:" "IMAP Host:") " IMAP_HOST; [[ -n "$IMAP_HOST" ]] && break; echo -e "  ${RED}$(t "Darf nicht leer sein!" "Cannot be empty!")${NC}"; done
+    read -p "  $(t "IMAP Port" "IMAP Port") [${DEFAULT_IMAP_PORT}]: " _in; IMAP_PORT="${_in:-$DEFAULT_IMAP_PORT}"
+    read -p "  $(t "SMTP Host [ENTER=${IMAP_HOST}]: " "SMTP Host [ENTER=${IMAP_HOST}]:") " _in; SMTP_HOST="${_in:-$IMAP_HOST}"
+    read -p "  $(t "SMTP Port" "SMTP Port") [${DEFAULT_SMTP_PORT}]: " _in; SMTP_PORT="${_in:-$DEFAULT_SMTP_PORT}"
+    read_secret "$(t "E-Mail Passwort" "Email Password")" EMAIL_PASS
+    echo ""; read_secret "$(t "Telegram Bot Token" "Telegram Bot Token")" TELEGRAM_TOKEN
+    read -p "  $(t "Telegram User-ID (Zahl):" "Telegram User-ID (number):") " TELEGRAM_USER_ID
+    [[ -z "$TELEGRAM_USER_ID" ]]            && log_error "$(t "Telegram User-ID leer!" "Telegram User-ID empty!")"
+    [[ ! "$TELEGRAM_USER_ID" =~ ^[0-9]+$ ]] && log_error "$(t "Muss eine Zahl sein!" "Must be a number!")"
+    echo ""; log_success "$(t "Zugangsdaten eingelesen." "Credentials read.")"
     exec > >(tee -a "$LOG_FILE") 2>&1
 }
 
@@ -1126,7 +1160,7 @@ show_summary() {
     unset OPENROUTER_KEY PERPLEXITY_KEY BRAVE_KEY EMAIL_PASS TELEGRAM_TOKEN NVIDIA_KEY NC_PASS 2>/dev/null || true
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║       NANOBOT STACK v2.9.5 – SETUP ABGESCHLOSSEN            ║${NC}"
+    echo -e "${CYAN}║       NANOBOT STACK v3.0.0 (Sprachauswahl) – SETUP ABGESCHLOSSEN ║${NC}"
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "  ${GREEN}Agent:${NC}    ${ONBOARD_BOT_NAME} für ${ONBOARD_NAME} aus ${ONBOARD_CITY}"
@@ -1156,6 +1190,7 @@ show_summary() {
 # MAIN
 # ============================================================================
 main() {
+    select_setup_language
     echo -e "${CYAN}"
     echo "  ███╗   ██╗ █████╗ ███╗   ██╗ ██████╗ ██████╗  ██████╗ ████████╗"
     echo "  ████╗  ██║██╔══██╗████╗  ██║██╔═══██╗██╔══██╗██╔═══██╗╚══██╔══╝"
@@ -1164,7 +1199,7 @@ main() {
     echo "  ██║ ╚████║██║  ██║██║ ╚████║╚██████╔╝██████╔╝╚██████╔╝   ██║   "
     echo "  ╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═════╝  ╚═════╝   ╚═╝   "
     echo -e "${NC}"
-    echo "  Setup v2.9.5 | 100% variabel — kein hardcodierter Wert"
+    echo "  Setup v3.0.0 (Sprachauswahl + Matrix-vorbereitung) | 100% variabel"
     echo ""
     collect_credentials
     collect_onboarding
@@ -1178,7 +1213,7 @@ main() {
 mkdir -p "$(dirname "$LOG_FILE")"
 case "${1:-}" in
     --help|-h)
-        echo "Nanobot Setup v2.9.0"
+        echo "Nanobot Setup v3.0.0"
         echo "  --skip-ts              Tailscale überspringen"
         echo "  --resume-from <1-10>   Ab Phase fortsetzen"
         exit 0 ;;
