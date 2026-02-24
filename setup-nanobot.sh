@@ -50,6 +50,11 @@ USE_NEXTCLOUD="n"
 NC_URL="" ; NC_USER="" ; NC_PASS=""
 NC_FOLDERS=()   # Array: wird interaktiv befüllt
 
+# Nextcloud Talk
+USE_NEXTCLOUD_TALK="n"
+NC_TALK_BASEURL="" ; NC_TALK_BOTSECRET="" ; NC_TALK_WEBHOOKPATH=""
+NC_TALK_ALLOWFROM="" ; NC_TALK_ALLOWROOMS="" ; NC_TALK_ROOMPOLICY=""
+
 # Sonstige Credentials
 TIMEZONE="" ; LOCALE=""
 IMAP_HOST="" ; SMTP_HOST="" ; IMAP_PORT="" ; SMTP_PORT=""
@@ -241,20 +246,57 @@ collect_nextcloud() {
     [[ ! "$USE_NEXTCLOUD" =~ ^[Jj]$ ]] && { log_info "$(t "Nextcloud übersprungen." "Nextcloud skipped.")"; return; }
 
     echo ""
-    log_info "$(t "Nextcloud-Zugangsdaten" "Nextcloud credentials")"
-    echo -e "  ${YELLOW}$(t "Tipp: Nutze ein App-Passwort (Nextcloud → Einstellungen → Sicherheit)" "Tip: Use an App Password (Nextcloud → Settings → Security")${NC}"
-    echo -e "  ${YELLOW}      $(t "NICHT dein Login-Passwort!" "DO NOT use your login password!")${NC}"
+    log_info "$(t "Nextcloud Talk Bot-Integration (optional)" "Nextcloud Talk Bot Integration (optional)")"
+    echo -e "  ${CYAN}─────────────────────────────────────────────────────────────${NC}"
+    echo -e "  $(t "Nanobot kann per Nextcloud Talk Nachrichten empfangen und senden." "Nanobot can receive and send messages via Nextcloud Talk.")"
+    echo -e "  $(t "Benötigt: php occ talk:bot:install auf dem Nextcloud Server." "Requires: php occ talk:bot:install on the Nextcloud server.")"
+    echo -e "  ${CYAN}─────────────────────────────────────────────────────────────${NC}"
     echo ""
-    while true; do
-        read -p "  $(t "Nextcloud URL (z.B. https://cloud.example.com):" "Nextcloud URL (e.g. https://cloud.example.com):") " NC_URL
-        NC_URL="${NC_URL%/}"   # trailing slash entfernen
-        [[ "$NC_URL" =~ ^https?:// ]] && break
-        echo -e "  ${RED}$(t "Muss mit http:// oder https:// beginnen!" "Must start with http:// or https://!")${NC}"
-    done
-    read -p "  $(t "Nextcloud Benutzername:" "Nextcloud username:") " NC_USER
-    [[ -z "$NC_USER" ]] && log_error "$(t "Benutzername darf nicht leer sein!" "Username cannot be empty!")"
-    read_secret "Nextcloud App-Passwort" NC_PASS
+    read -p "  $(t "Nextcloud Talk aktivieren? (j/n):" "Activate Nextcloud Talk? (y/n):") " USE_NEXTCLOUD_TALK
+    if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+        while true; do
+            read -p "  $(t "Nextcloud-URL (z.B. https://cloud.example.com):" "Nextcloud URL (e.g. https://cloud.example.com):") " NC_TALK_BASEURL
+            NC_TALK_BASEURL="${NC_TALK_BASEURL%/}"   # trailing slash entfernen
+            [[ "$NC_TALK_BASEURL" =~ ^https?:// ]] && break
+            echo -e "  ${RED}$(t "Muss mit http:// oder https:// beginnen!" "Must start with http:// or https://!")${NC}"
+        done
+        read_secret "$(t "Nextcloud Bot-Secret (min 40 Zeichen, von occ talk:bot:install)" "Nextcloud Bot Secret (min 40 chars, from occ talk:bot:install)")" NC_TALK_BOTSECRET
+        read -p "  $(t "Webhook-Path [webhook/nextcloud_talk]:" "Webhook Path [webhook/nextcloud_talk]:") " _wp
+        NC_TALK_WEBHOOKPATH="${_wp:-webhook/nextcloud_talk}"
+        read -p "  $(t "Raum-Policy [open/mention] (ENTER=mention):" "Room Policy [open/mention] (ENTER=mention):") " _rp
+        NC_TALK_ROOMPOLICY="${_rp:-mention}"
+        read -p "  $(t "Erlaubte Benutzer (kommagetrennt, ENTER=alle)" "Allowed users (comma-separated, ENTER=all):") " NC_TALK_ALLOWFROM
+        read -p "  $(t "Erlaubte Räume (Nextcloud-Tokens, kommagetrennt, ENTER=alle)" "Allowed rooms (Nextcloud tokens, comma-separated, ENTER=all):") " NC_TALK_ALLOWROOMS
 
+        echo ""
+        echo -e "  ${CYAN}──── Nextcloud Talk-Konfiguration ──────────────────────────────${NC}"
+        echo -e "  URL:     ${NC_TALK_BASEURL}"
+        echo -e "  Webhook: ${NC_TALK_WEBHOOKPATH}"
+        echo -e "  Policy:  ${NC_TALK_ROOMPOLICY}"
+        if [[ -n "$NC_TALK_ALLOWFROM" ]]; then
+            echo -e "  Users:"
+            IFS=',' read -ra users <<< "$NC_TALK_ALLOWFROM"
+            for u in "${users[@]}"; do
+                echo -e "           ${GREEN}${u}${NC}"
+            done
+        else
+            echo -e "  Users:  $(t "Alle" "All")"
+        fi
+        if [[ -n "$NC_TALK_ALLOWROOMS" ]]; then
+            echo -e "  Rooms:"
+            IFS=',' read -ra rooms <<< "$NC_TALK_ALLOWROOMS"
+            for r in "${rooms[@]}"; do
+                echo -e "           ${GREEN}${r}${NC}"
+            done
+        else
+            echo -e "  Rooms:  $(t "Alle" "All")"
+        fi
+        echo -e "  ${CYAN}─────────────────────────────────────────────────────────────${NC}"
+        echo ""
+        read -p "  $(t "Korrekt? (j/n):" "Correct? (y/n):") " _confirm
+        [[ ! "$_confirm" =~ ^[Jj]$ ]] && { collect_nextcloud_talk; return; }
+        log_success "$(t "Nextcloud Talk-Konfiguration eingelesen." "Nextcloud Talk configuration read.")"
+    fi
     echo ""
     log_info "$(t "Verbindungstest läuft..." "Testing connection...")"
     local test_result
@@ -336,6 +378,98 @@ PYEOF
     read -p "  Korrekt? (j/n): " _confirm
     [[ ! "$_confirm" =~ ^[Jj]$ ]] && { collect_nextcloud; return; }
     log_success "Nextcloud-Konfiguration eingelesen."
+}
+
+# ============================================================================
+# PHASE 0c: NEXTCLOUD TALK CHANNEL
+# ============================================================================
+collect_nextcloud_talk() {
+    log_step "$(t "Phase 0c: Nextcloud Talk Channel (optional)" "Phase 0c: Nextcloud Talk Channel (optional)")"
+    echo ""
+    read -p "  $(t "Nextcloud Talk Channel verwenden? (ngrok/port-forward ist notwendig)" "Use Nextcloud Talk Channel? (ngrok/port-forward is required)") (j/n): " USE_NEXTCLOUD_TALK
+    [[ ! "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]] && { log_info "$(t "Nextcloud Talk übersprungen." "Nextcloud Talk skipped.")"; return; }
+
+    echo ""
+    log_info "$(t "Nextcloud Talk Channel Setup" "Nextcloud Talk Channel Setup")"
+    echo -e "  ${YELLOW}$(t "Voraussetzungen:" "Prerequisites:")${NC}"
+    echo -e "    1. Nextcloud Talk App installiert mit Bot-Feature aktiviert"
+    echo -e "    2. Öffentliche URL für ngrok oder Reverse Proxy (https://your-domain.com/webhook/nextcloud_talk)"
+    echo -e "    3. Bot Secret mindestens 40 Zeichen"
+    echo ""
+    log_info "$(t "Bot Secret Erstellung in Nextcloud:" "Bot Secret creation in Nextcloud:")"
+    echo -e "  ${CYAN}php occ talk:bot:install${NC}"
+    echo -e "    \"$(t "Nanobot" "Nanobot")\" \\"
+    echo -e "    \"$(t "dein-bot-secret-min-40-zeichen" "your-bot-secret-min-40-chars")\" \\"
+    echo -e "    \"https://deine-domain.com/webhook/nextcloud_talk\" \\"
+    echo -e "    --feature webhook \\"
+    echo -e "    --feature response"
+    echo ""
+
+    echo ""
+    while true; do
+        read -p "  $(t "Nextcloud URL (z.B. https://cloud.example.com):" "Nextcloud URL (e.g. https://cloud.example.com):") " NCT_URL
+        NCT_URL="${NCT_URL%/}"
+        [[ "$NCT_URL" =~ ^https?:// ]] && break
+        echo -e "  ${RED}$(t "Muss mit http:// oder https:// beginnen!" "Must start with http:// or https://!")${NC}"
+    done
+
+    log_info "$(t "Bot Secret erstellen (min. 40 Zeichen):" "Create Bot Secret (min. 40 chars):")"
+    log_info "$(t "Verwende openssl rand -base64 48 für sicheren Secret:" "Use openssl rand -base64 48 for secure secret:")"
+    read_secret "$(t "Bot Secret:" "Bot Secret:")" NC_TALK_BOTSECRET
+
+    log_info "$(t "Öffentliche Webhook URL:" "Public Webhook URL:")"
+    echo -e "  $(t "ngrok - tunnel=https://deine-domain.com" "ngrok - tunnel=https://your-domain.com")"
+    echo -e "  $(t "Falls du einen Reverse Proxy nutzt, die URL eingeben (endet mit /webhook/nextcloud_talk):" "If using reverse proxy, enter the URL (ends with /webhook/nextcloud_talk):")"
+    read -p "  $(t "Webhook URL:" "Webhook URL"): " NCT_WEBHOOKPATH
+
+    if [[ -z "$NCT_WEBHOOKPATH" ]]; then
+        NCT_WEBHOOKPATH="/webhook/nextcloud_talk"
+        log_warning "$(t "Webhook Pfad leer → Standardwert" "Webhook path empty → using default")": $NCT_WEBHOOKPATH
+    fi
+
+    echo ""
+    log_info "$(t "Zugelassene Nextcloud Benutzer (@bot:user@cloud.example.com):" "Allowed Nextcloud users (@bot:user@cloud.example.com):")"
+    log_info "$(t "Komma-getrennt, ENTER = alle" "Comma-separated, ENTER = all")"
+    read -p "  $(t "User-Liste:" "User list:"): " NCT_ALLOWFROM
+    if [[ -n "$NCT_ALLOWFROM" ]]; then
+        IFS=',' read -ra NCT_ALLOW_FROM <<< "$NCT_ALLOWFROM"
+    else
+        NCT_ALLOW_FROM=()
+    fi
+
+    echo ""
+    log_info "$(t "Erlaubte Nextcloud Talk Räume (Room Tokens aus Element):" "Allowed Nextcloud Talk rooms (Room tokens from Element):")"
+    log_info "$(t "Komma-getrennt, ENTER = alle" "Comma-separated, ENTER = all")"
+    read -p "  $(t "Room-Liste:" "Room list:"): " NCT_ALLOWROOMS
+    if [[ -n "$NCT_ALLOWROOMS" ]]; then
+        IFS=',' read -ra NCT_ALLOW_ROOMS <<< "$NCT_ALLOWROOMS"
+    else
+        NCT_ALLOW_ROOMS=()
+    fi
+
+    echo ""
+    echo -e "  $(t "Raum-Policy:" "Room Policy:")"
+    echo -e "    1) $(t "mention" "mention") ${CYAN}← $(t "@Bot erforderlich für Antwort" "@Bot required for response")${NC}"
+    echo -e "    2) $(t "open" "open") ${CYAN}← $(t "antwortet auf alle Nachrichten" "responds to all messages")${NC}"
+    read -p "  $(t "Policy [1]:" "Policy [1]:"): " _rp
+    case "${_rp:-1}" in
+        2) NCT_ROOM_POLICY="open" ;;
+        *) NCT_ROOM_POLICY="mention" ;;
+    esac
+
+    echo ""
+    echo -e "  ${CYAN}──── Nextcloud Talk Channel Konfiguration ───────────────────────────${NC}"
+    echo -e "  $(t "Nextcloud URL:" "Nextcloud URL"):  ${NC_URL}"
+    echo -e "  $(t "Webhook URL:" "Webhook URL"):    ${NCT_WEBHOOKPATH}"
+    echo -e "  $(t "Bot Secret:" "Bot Secret"):      $(t "min. 40 Zeichen" "min. 40 chars")"
+    echo -e "  $(t "User-Liste:" "User list"):        ${#NCT_ALLOW_FROM[@]} $(t "Benutzer" "users")"
+    echo -e "  $(t "Room-Liste:" "Room list"):        ${#NCT_ALLOW_ROOMS[@]} $(t "Räume" "rooms")"
+    echo -e "  $(t "Raum-Policy:" "Room policy"):     ${NCT_ROOM_POLICY}"
+    echo -e "  ${CYAN}────────────────────────────────────────────────────────────────────${NC}"
+    echo ""
+    read -p "  $(t "Korrekt? (j/n):" "Correct? (y/n):") " _confirm
+    [[ ! "$_confirm" =~ ^[Jj]$ ]] && { collect_nextcloud_talk; return; }
+    log_success "$(t "Nextcloud Talk Channel Konfiguration eingelesen." "Nextcloud Talk Channel configuration read.")"
 }
 
 # ============================================================================
@@ -551,6 +685,32 @@ phase4_nanobot_config() {
     \"watchFolders\": ${folders_json}
   }"
     fi
+
+local nc_talk_block=""
+    if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+        local from_json="["
+        for i in "${!NCT_ALLOW_FROM[@]}"; do
+            from_json+="\"${NCT_ALLOW_FROM[$i]}\""
+            [[ $i -lt $(( ${#NCT_ALLOW_FROM[@]} - 1 )) ]] && from_json+=","
+        done
+        from_json+="]"
+        local rooms_json="["
+        for i in "${!NCT_ALLOW_ROOMS[@]}"; do
+            rooms_json+="\"${NCT_ALLOW_ROOMS[$i]}\""
+            [[ $i -lt $(( ${#NCT_ALLOW_ROOMS[@]} - 1 )) ]] && rooms_json+=","
+        done
+        rooms_json+="]"
+        nc_talk_block=",
+  \"nextcloud_talk\": {
+    \"enabled\": true,
+    \"baseUrl\": \"${NCT_URL}\",
+    \"botSecret\": \"${NC_TALK_BOTSECRET}\",
+    \"webhookPath\": \"${NC_TALK_WEBHOOKPATH}\",
+    \"allowFrom\": ${from_json},
+    \"allowRooms\": ${rooms_json},
+    \"roomPolicy\": \"${NCT_ROOM_POLICY}\"
+  }"
+    fi
     if [[ "$USE_MATRIX" =~ ^[JjYy]$ ]]; then
         local rooms_json="[]"
         local e2ee_val="false"
@@ -582,6 +742,7 @@ PYEOF
         "$matrix_block" \
         "$tools_block" \
         "$nc_block" \
+        "$nc_talk_block" \
         > "${NANOBOT_DATA_DIR}/config.json"
 
     chmod 600 "${NANOBOT_DATA_DIR}/config.json"
@@ -647,6 +808,283 @@ $(echo -e "$folder_list_md")
 add_task "nextcloud-sync-daily" \
     "Führe bash '"${NANOBOT_DATA_DIR}"'/workspace/nextcloud-sync.sh sync aus. Zeige Ergebnis per Telegram: wie viele Dateien neu/geändert und gesamt in Qdrant." \
     "0 6 * * *"'
+
+        nc_talk_cron_section=''
+        if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+            nc_talk_cron_section='
+add_task "nextcloud-talk-monitor" \
+    "Prüfe Nextcloud Talk Verbindungen. Sende Status per Telegram." \
+    "*/15 * * * *"'
+        fi
+    fi
+
+    # ── Nextcloud Talk Workspace-Dateien ─────────────────────────────────────
+    if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+        # nextcloud-talk-config.json erstellen
+        local from_json="["
+        for i in "${!NCT_ALLOW_FROM[@]}"; do
+            from_json+="\"${NCT_ALLOW_FROM[$i]}\""
+            [[ $i -lt $(( ${#NCT_ALLOW_FROM[@]} - 1 )) ]] && from_json+=","
+        done
+        from_json+="]"
+        local rooms_json="["
+        for i in "${!NCT_ALLOW_ROOMS[@]}"; do
+            rooms_json+="\"${NCT_ALLOW_ROOMS[$i]}\""
+            [[ $i -lt $(( ${#NCT_ALLOW_ROOMS[@]} - 1 )) ]] && rooms_json+=","
+        done
+        rooms_json+="]"
+
+cat > "${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json" << "TALKCONF"
+{
+  "channels": {
+    "nextcloud_talk": {
+      "enabled": true,
+      "baseUrl": "${NCT_URL}",
+      "botSecret": "${NC_TALK_BOTSECRET}",
+      "webhookPath": "${NC_TALK_WEBHOOKPATH}",
+      "allowFrom": [${from_json}],
+      "allowRooms": ${rooms_json},
+      "roomPolicy": "${NCT_ROOM_POLICY}"
+    }
+  }
+}
+TALKCONF
+    log_success "nextcloud-talk-config.json erstellt (${NCT_URL})"
+
+        # test-webhook.py erstellen
+        cat > "${NANOBOT_DATA_DIR}/workspace/test-webhook.py" << TESTWEBHOOK
+#!/usr/bin/env python3
+"""Webhook Test Script for Nextcloud Talk Channel.
+
+This script tests the webhook endpoint with a test message.
+Requires: python3, openssl, httpx, aiohttp
+"""
+
+import asyncio
+import hashlib
+import hmac
+import json
+import os
+import subprocess
+from pathlib import Path
+
+try:
+    import httpx
+except ImportError:
+    print("Error: httpx not installed")
+    print("Install with: pip install httpx")
+    exit(1)
+
+try:
+    from aiohttp import web
+except ImportError:
+    print("Error: aiohttp not installed")
+    print("Install with: pip install aiohttp")
+    exit(1)
+
+
+async def test_webhook(port: int = 18790) -> None:
+    """Run a webhook test."""
+    print(f"🧪 Starting Webhook Test Script")
+    print(f"📡 Gateway Port: {port}")
+
+    # Print test config
+    print("\n📋 Test Details:")
+    print(f"   BASE_URL: {NCT_URL}")
+    print(f"   BOT_SECRET: {NCT_BOTSECRET}")
+    print(f"   WEBHOOK_PATH: {NCT_WEBHOOKPATH}")
+    print(f"   ROOM_TOKEN: testtoken123")
+
+    # Create test payload
+    test_payload = {
+        "type": "Create",
+        "actor": {"type": "users", "id": "testuser1", "displayName": "Test User 1"},
+        "object": {
+            "type": "comment",
+            "id": "1",
+            "name": "Test User 1",
+            "content": "Hello Bot! What can you do?",
+            "mediaType": "text/markdown",
+        },
+        "target": {"type": "room", "id": "testtoken123", "name": "Test Room"},
+    }
+
+    print("\n📤 Test Payload:")
+    print(json.dumps(test_payload, indent=2))
+
+    # Calculate signature
+    print("\n🔐 HMAC Signature Calculation:")
+    print(f"   Note: Using botSecret from config.json")
+
+    # Read bot_secret from config.json (if available)
+    config_path = Path.home() / ".nanobot" / "config.json"
+    if config_path.exists():
+        import json
+
+        config_data = json.loads(config_path.read_text())
+        bot_secret = (
+            config_data.get("channels", {})
+            .get("nextcloud_talk", {})
+            .get("botSecret", "")
+        )
+        if bot_secret:
+            print(
+                f"   ✅ Bot-Secret found in config.json ({len(bot_secret)} characters)"
+            )
+
+    # Test with configured secret
+    bot_secret = "${NC_TALK_BOTSECRET}"
+    random_value = os.urandom(32).hex()
+    body = json.dumps(test_payload)
+    signature = hmac.new(
+        bot_secret.encode(),
+        (random_value + body).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    print(f"   RANDOM_VALUE: {random_value}")
+    print(f"   SIGNATURE: {signature}")
+
+    # Send test request
+    print("\n🌐 Sending Test Request to:")
+    url = f"http://localhost:{port}{NCT_WEBHOOKPATH}"
+
+    print(f"   URL: {url}")
+    print(f"   HEADERS:")
+    print(f"     X-Nextcloud-Talk-Random: {random_value}")
+    print(f"     X-Nextcloud-Talk-Signature: {signature}")
+    print(f"   BODY: {body[:100]}...")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                content=body,
+                headers={
+                    "X-Nextcloud-Talk-Random": random_value,
+                    "X-Nextcloud-Talk-Signature": signature,
+                    "Content-Type": "application/json",
+                },
+            )
+            print(f"\n✅ Response received:")
+            print(f"   Status: {response.status_code}")
+            print(f"   Body: {response.text[:200]}...")
+
+            if response.status_code == 200:
+                print("\n🎉 Webhook test successful!")
+            else:
+                print(f"\n❌ Webhook test failed! Status: {response.status_code}")
+
+    except httpx.ConnectError:
+        print("\n❌ Connection failed!")
+        print(f"   Make sure the nanobot gateway is running on port {port}:")
+        print(f"   > nanobot gateway")
+    except Exception as e:
+        print(f"\n❌ Error during request: {e}")
+
+
+async def start_webhook_test_server() -> None:
+    """Starts a local webhook server for testing."""
+    print(f"🚀 Starting local Webhook Test Server")
+
+    app = web.Application()
+
+    async def handle_webhook(request):
+        """Handle the webhook."""
+        from aiohttp import web
+
+        print(f"\n📨 Webhook received!")
+
+        try:
+            body_bytes = await request.read()
+            body_str = body_bytes.decode("utf-8")
+
+            random_header = request.headers.get("X-Nextcloud-Talk-Random", "")
+            sig_header = request.headers.get("X-Nextcloud-Talk-Signature", "")
+
+            print(f"   RANDOM_HEADER: {random_header}")
+            print(f"   SIGNATURE_HEADER: {sig_header}")
+            print(f"   BODY: {body_str[:200]}...")
+
+            # Test bot secret
+            bot_secret = "${NC_TALK_BOTSECRET}"
+
+            expected = hmac.new(
+                bot_secret.encode(),
+                (random_header + body_str).encode(),
+                hashlib.sha256,
+            ).hexdigest()
+
+            if not hmac.compare_digest(sig_header.lower(), expected.lower()):
+                print(f"   ❌ Invalid signature!")
+                return web.Response(status=401, text="Unauthorized")
+
+            print(f"   ✅ Signature validated!")
+
+            data = json.loads(body_str)
+            print(f"   Event-Type: {data.get('type')}")
+
+            response = {"status": 200, "text": "OK", "received_payload": data}
+
+            print(f"   📦 Response: {json.dumps(response)[:200]}...")
+            return web.json_response(response)
+
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+            return web.Response(status=500, text=str(e))
+
+    app.router.add_post(NCT_WEBHOOKPATH.replace("/", ""), handle_webhook)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 18791)
+    await site.start()
+
+    print(f"✅ Test server started at http://localhost:18791{NCT_WEBHOOKPATH}")
+    print("⚠️  Press CTRL+C to exit")
+
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        print("\n🛑 Server is shutting down...")
+        await runner.cleanup()
+
+
+async def main() -> None:
+    """Main function."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Webhook Test Script for Nextcloud Talk Channel"
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=18791,
+        help="Port for webhook server (default: 18791)",
+    )
+    parser.add_argument(
+        "--test-external",
+        action="store_true",
+        help="Test webhook on port 18790 (Gateway server)",
+    )
+
+    args = parser.parse_args()
+
+    if args.test_external:
+        # Test external gateway server
+        await test_webhook(port=18790)
+    else:
+        # Start local test server
+        await start_webhook_test_server()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+TESTWEBHOOK
+        chmod +x "${NANOBOT_DATA_DIR}/workspace/test-webhook.py"
+        log_success "test-webhook.py erstellt"
     fi
 
     # ── AGENTS.md ──────────────────────────────────────────────────────────
@@ -740,6 +1178,7 @@ EOF
 - emails.py: ${NANOBOT_DATA_DIR}/workspace/emails.py
 - switch-model.sh: ${NANOBOT_DATA_DIR}/workspace/switch-model.sh
 ${nc_memory_section}
+${nc_talk_memory_section}
 EOF
 
     # ── emails.py ──────────────────────────────────────────────────────────
@@ -835,6 +1274,26 @@ echo "Gateway neugestartet ✓"
 SWITCHEOF
     chmod +x "${NANOBOT_DATA_DIR}/workspace/switch-model.sh"
 
+    # ── test-webhook.py ─────────────────────────────────────────────────────
+    if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+        # Copy test-webhook.py from temp directory        cp /tmp/setup-nanobot-test-webhook.py "${NANOBOT_DATA_DIR}/workspace/test-webhook.py" 2>/dev/null || { log_error "Cannot create test-webhook.py"; }
+        chmod +x "${NANOBOT_DATA_DIR}/workspace/test-webhook.py"
+        log_success "test-webhook.py erstellt"
+    fi
+        if [[ "$USE_NEXTCLOUD_TALK" =~ ^[Jj]$ ]]; then
+        cat > "${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json" << "TALKCONF"
+{
+  "baseUrl": "${NC_TALK_BASEURL}",
+  "botSecret": "${NC_TALK_BOTSECRET}",
+  "webhookPath": "${NC_TALK_WEBHOOKPATH}",
+  "allowFrom": ["${NC_TALK_ALLOWFROM:-all}"],
+  "allowRooms": ${NC_TALK_ALLOWROOMS:-[]},
+  "roomPolicy": "${NC_TALK_ROOMPOLICY}"
+}
+TALKCONF
+        log_success "nextcloud-talk-config.json erstellt"
+    fi
+
     # ── nextcloud-sync.sh — liest Creds AUS config.json ───────────────────
     if [[ "$USE_NEXTCLOUD" =~ ^[Jj]$ ]]; then
         cat > "${NANOBOT_DATA_DIR}/workspace/nextcloud-sync.sh" << NCEOF
@@ -918,9 +1377,9 @@ add_task() {
 add_task "email-daily-summary"  "Führe python3 ${NANOBOT_CONTAINER_DIR}/workspace/emails.py aus. Erstelle strukturierte Zusammenfassung. Sende per Telegram." "0 8 * * *"
 add_task "email-urgent-check"   "Führe python3 ${NANOBOT_CONTAINER_DIR}/workspace/emails.py aus. Prüfe auf DRINGEND/URGENT/KRITISCH. Falls gefunden: sofort per Telegram melden." "*/30 7-22 * * *"
 add_task "research-daily"       "Nutze braveSearch: KI-Neuigkeiten heute, IT Security Patches heute, Linux Updates heute. Fasse 3 wichtigste Punkte pro Thema zusammen. Sende per Telegram." "0 9 * * *"
-add_task "security-alert-check" "Nutze braveSearch: CVE CVSS 9.0 heute Linux Windows Docker. Falls kritisch: sofort per Telegram mit CVE-ID. Sende immer Telegram-Bestätigung." "0 */4 * * *"
-${nc_cron_section}
-touch "\$SETUP_MARKER"
+    add_task "security-alert-check" "Nutze braveSearch: CVE CVSS 9.0 heute Linux Windows Docker. Falls kritisch: sofort per Telegram mit CVE-ID. Sende immer Telegram-Bestätigung." "0 */4 * * *"
+    ${nc_talk_cron_section}
+    touch "\$SETUP_MARKER"
 echo "INFO: Cron-Setup abgeschlossen."
 CRONEOF
     chmod +x "${NANOBOT_DATA_DIR}/workspace/cron-setup.sh"
@@ -1191,6 +1650,7 @@ main() {
     collect_credentials
     collect_onboarding
     collect_nextcloud
+    collect_nextcloud_talk
     phase1_system ; phase2_docker ; phase3_data_dir ; phase3b_build_sync_image
     phase4_nanobot_config ; phase5_topics ; phase6_docker_compose
     phase7_tailscale ; phase8_security ; phase9_autostart ; phase10_start
