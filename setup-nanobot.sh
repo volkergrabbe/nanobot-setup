@@ -52,8 +52,10 @@ NC_FOLDERS=()   # Array: wird interaktiv befüllt
 
 # Nextcloud Talk
 USE_NEXTCLOUD_TALK="n"
-NC_TALK_BASEURL="" ; NC_TALK_BOTSECRET="" ; NC_TALK_WEBHOOKPATH=""
-NC_TALK_ALLOWFROM="" ; NC_TALK_ALLOWROOMS="" ; NC_TALK_ROOMPOLICY=""
+NCT_URL="" ; NC_TALK_BOTSECRET="" ; NCT_WEBHOOKPATH=""
+NCT_ALLOW_FROM=()   # Array: wird interaktiv befüllt
+NCT_ALLOW_ROOMS=()   # Array: wird interaktiv befüllt
+NCT_ROOM_POLICY="mention"  # "open" oder "mention"
 
 # Sonstige Credentials
 TIMEZONE="" ; LOCALE=""
@@ -430,9 +432,9 @@ collect_nextcloud_talk() {
     echo ""
     log_info "$(t "Zugelassene Nextcloud Benutzer (@bot:user@cloud.example.com):" "Allowed Nextcloud users (@bot:user@cloud.example.com):")"
     log_info "$(t "Komma-getrennt, ENTER = alle" "Comma-separated, ENTER = all")"
-    read -p "  $(t "User-Liste:" "User list:"): " NCT_ALLOWFROM
-    if [[ -n "$NCT_ALLOWFROM" ]]; then
-        IFS=',' read -ra NCT_ALLOW_FROM <<< "$NCT_ALLOWFROM"
+    read -p "  $(t "User-Liste:" "User list:"): " _ua
+    if [[ -n "$_ua" ]]; then
+        IFS=',' read -ra NCT_ALLOW_FROM <<< "$_ua"
     else
         NCT_ALLOW_FROM=()
     fi
@@ -440,22 +442,12 @@ collect_nextcloud_talk() {
     echo ""
     log_info "$(t "Erlaubte Nextcloud Talk Räume (Room Tokens aus Element):" "Allowed Nextcloud Talk rooms (Room tokens from Element):")"
     log_info "$(t "Komma-getrennt, ENTER = alle" "Comma-separated, ENTER = all")"
-    read -p "  $(t "Room-Liste:" "Room list:"): " NCT_ALLOWROOMS
-    if [[ -n "$NCT_ALLOWROOMS" ]]; then
-        IFS=',' read -ra NCT_ALLOW_ROOMS <<< "$NCT_ALLOWROOMS"
+    read -p "  $(t "Room-Liste:" "Room list:"): " _ra
+    if [[ -n "$_ra" ]]; then
+        IFS=',' read -ra NCT_ALLOW_ROOMS <<< "$_ra"
     else
         NCT_ALLOW_ROOMS=()
     fi
-
-    echo ""
-    echo -e "  $(t "Raum-Policy:" "Room Policy:")"
-    echo -e "    1) $(t "mention" "mention") ${CYAN}← $(t "@Bot erforderlich für Antwort" "@Bot required for response")${NC}"
-    echo -e "    2) $(t "open" "open") ${CYAN}← $(t "antwortet auf alle Nachrichten" "responds to all messages")${NC}"
-    read -p "  $(t "Policy [1]:" "Policy [1]:"): " _rp
-    case "${_rp:-1}" in
-        2) NCT_ROOM_POLICY="open" ;;
-        *) NCT_ROOM_POLICY="mention" ;;
-    esac
 
     echo ""
     echo -e "  ${CYAN}──── Nextcloud Talk Channel Konfiguration ───────────────────────────${NC}"
@@ -706,8 +698,8 @@ local nc_talk_block=""
     \"baseUrl\": \"${NCT_URL}\",
     \"botSecret\": \"${NC_TALK_BOTSECRET}\",
     \"webhookPath\": \"${NC_TALK_WEBHOOKPATH}\",
-    \"allowFrom\": ${from_json},
-    \"allowRooms\": ${rooms_json},
+    \"allowFrom\": [${from_json}],
+    \"allowRooms\": [${rooms_json}],
     \"roomPolicy\": \"${NCT_ROOM_POLICY}\"
   }"
     fi

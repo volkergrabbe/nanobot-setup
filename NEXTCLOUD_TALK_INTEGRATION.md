@@ -1,81 +1,266 @@
-# Nextcloud Talk Channel Integration — Dokumentation
+# Nextcloud Talk Channel Integration — Complete Documentation
 
-## 📚 Inhaltsverzeichnis
+## 📚 Table of Contents
 
-1. [Übersicht](#übersicht)
-2. [Installation & Voraussetzungen](#installation--voraussetzungen)
-3. [Konfiguration](#konfiguration)
-4. [Nextcloud Talk Setup](#nextcloud-talk-setup)
-5. [Workspace-Dateien](#workspace-dateien)
-6. [Debugging & Testing](#debugging--testing)
-7. [Beispielkonfiguration](#beispielkonfiguration)
-8. [Problembehandlung](#problembehandlung)
+1. [Overview](#overview)
+2. [Integration Problems & Solutions](#integration-problems--solutions)
+3. [Installation & Prerequisites](#installation--prerequisites)
+4. [Configuration](#configuration)
+5. [Nextcloud Talk Setup](#nextcloud-talk-setup)
+6. [Workspace Files](#workspace-files)
+7. [Debugging & Testing](#debugging--testing)
+8. [Example Configuration](#example-configuration)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
-## 📌 Übersicht
+## 📌 Overview
 
-Die Nextcloud Talk Channel Integration ermöglicht es dem Nanobot Agenten, Nachrichten über [Nextcloud Talk](https://nextcloud.com/apps/spreed/) zu empfangen und zu beantworten. Dies basiert auf dem offiziellen **Talk Bot Webhook API** von Nextcloud.
+The Nextcloud Talk Channel integration enables the Nanobot Agent to receive and respond to messages via [Nextcloud Talk](https://nextcloud.com/apps/spreed/). This is based on the official **Talk Bot Webhook API** from Nextcloud.
 
 ### Features
 
-- ✅ Webhook-basierte Event-Verarbeitung (keine persistenten WebSocket-Verbindungen)
-- ✅ HMAC-Signatur-Validierung
-- ✅ Konfigurierbare `roomPolicy` (open/mention)
-- ✅ Whitelist für Benutzer und Räume
-- ✅ Unterstützung für lange Nachrichten (Chunking)
-- ✅ Volle Integration mit dem Nanobot MessageBus
+- ✅ Webhook-based event processing (no persistent WebSocket connections)
+- ✅ HMAC signature validation
+- ✅ Configurable `roomPolicy` (open/mention)
+- ✅ Whitelist for users and rooms
+- ✅ Support for long messages (Chunking)
+- ✅ Full integration with the Nanobot MessageBus
 
-### Integration mit setup-nanobot.sh
+### Integration with setup-nanobot.sh
 
-Dieses Setup-Script integriert:
-1. **collect_nextcloud_talk()** - Interaktive Konfiguration (Phase 0c)
-2. **nextcloud-talk-config.json** - Beispiel-Konfiguration (Workspace)
-3. **test-webhook.py** - Test-Skript für Webhooks
-4. **AGENTS.md / MEMORY.md** - Dokumentation für den Agenten
+This setup script integrates:
+1. **collect_nextcloud_talk()** - Interactive configuration (Phase 0c)
+2. **nextcloud-talk-config.json** - Example configuration (Workspace)
+3. **test-webhook.py** - Test script for webhooks
+4. **AGENTS.md / MEMORY.md** - Documentation for the agent
 
 ---
 
-## 📦 Installation & Voraussetzungen
+## 🔧 Integration Problems & Solutions
 
-### Voraussetzungen
+### Problem 1: Variable Naming Inconsistency
 
-- ✅ Nanobot Setup v3.0.0+ installiert
-- ✅ Nextcloud Talk App installiert
-- ✅ Öffentliche URL für ngrok oder Reverse Proxy
-- ✅ Bot Secret (min. 40 Zeichen)
+**Original Issue:**
+```bash
+# INCORRECT - Mixed variable names
+NC_TALK_BASEURL="" ; NC_TALK_BOTSECRET="" ; NC_TALK_WEBHOOKPATH=""
+NC_TALK_ALLOWFROM="" ; NC_TALK_ALLOWROOMS="" ; NC_TALK_ROOMPOLICY=""
+```
 
-### Installationsschritte
+**Solution:**
+```bash
+# CORRECT - Consistent variable naming
+NCT_URL="" ; NC_TALK_BOTSECRET="" ; NCT_WEBHOOKPATH=""
+NCT_ALLOW_FROM=()   # Array
+NCT_ALLOW_ROOMS=()   # Array
+NCT_ROOM_POLICY="mention"
+```
+
+### Problem 2: Hardcoded Value in config.json
+
+**Original Issue:**
+```json
+{
+  "channels": {
+    "nextcloud_talk": {
+      "allowFrom": ["${NC_TALK_ALLOWFROM:-all}"],  // INCORRECT
+      "allowRooms": ${NC_TALK_ALLOWROOMS:-[]}        // INCORRECT
+    }
+  }
+}
+```
+
+**Solution:**
+```json
+{
+  "channels": {
+    "nextcloud_talk": {
+      "allowFrom": [${from_json}],    // CORRECT - Array
+      "allowRooms": [${rooms_json}]    // CORRECT - Array
+    }
+  }
+}
+```
+
+### Problem 3: Test Script Not Integrated
+
+**Original Issue:**
+- `test-webhook.py` was created but not properly integrated into the workspace
+
+**Solution:**
+- Created `${NANOBOT_DATA_DIR}/workspace/test-webhook.py`
+- Updated with proper variable references
+- Added `chmod +x` for executable permissions
+
+### Problem 4: Documentation Missing
+
+**Original Issue:**
+- No documentation about Nextcloud Talk setup in the script
+
+**Solution:**
+- Created `NEXTCLOUD_TALK_INTEGRATION.md` with complete documentation
+- Added Nextcloud Talk setup instructions to AGENTS.md & MEMORY.md
+- Included troubleshooting guide
+
+---
+
+## 📦 Installation & Prerequisites
+
+### Prerequisites
+
+- ✅ Nanobot Setup v3.0.0+ installed
+- ✅ Nextcloud Talk App installed
+- ✅ Public URL for ngrok or Reverse Proxy
+- ✅ Bot Secret (min. 40 characters)
+
+### Installation Steps
 
 ```bash
-# 1. Setup-Script ausführen
+# 1. Run setup script
 sudo bash setup-nanobot.sh
 
-# 2. Bei Phase 0c Nextcloud Talk Channel auswählen (j)
+# 2. At Phase 0c, select Nextcloud Talk Channel (j)
 
-# 3. Konfigurationen eingeben (siehe nächste Sektion)
+# 3. Enter configuration (see next section)
 
-# 4. After installation: Nextcloud Talk aus Webhook öffnen
-#    (siehe "Nextcloud Talk Setup")
+# 4. After installation: Open Nextcloud Talk from webhook
+#    (see "Nextcloud Talk Setup")
 ```
 
 ---
 
-## ⚙️ Konfiguration
+## ⚙️ Configuration
 
-### Variables im Setup-Script
+### Variables in the Setup Script
 
-| Variable | Beschreibung | Default |
+| Variable | Description | Default |
 |----------|-------------|---------|
-| `USE_NEXTCLOUD_TALK` | Aktiviert Nextcloud Talk Channel | `n` |
-| `NCT_URL` | Nextcloud URL (z.B. https://cloud.example.com) | - |
-| `NC_TALK_BOTSECRET` | Bot Secret (min. 40 Zeichen) | - |
-| `NCT_WEBHOOKPATH` | Webhook-URL-Pfad | `/webhook/nextcloud_talk` |
-| `NCT_ALLOW_FROM[]` | Zulässige Nextcloud User IDs | `[]` (alle) |
-| `NCT_ALLOW_ROOMS[]` | Zulässige Room Tokens | `[]` (alle) |
-| `NCT_ROOM_POLICY` | Raum-Policy (open/mention) | `mention` |
+| `USE_NEXTCLOUD_TALK` | Enable Nextcloud Talk Channel | `n` |
+| `NCT_URL` | Nextcloud URL (e.g. https://cloud.example.com) | - |
+| `NC_TALK_BOTSECRET` | Bot Secret (min. 40 characters) | - |
+| `NCT_WEBHOOKPATH` | Webhook URL path | `/webhook/nextcloud_talk` |
+| `NCT_ALLOW_FROM[]` | Allowed Nextcloud User IDs | `[]` (all) |
+| `NCT_ALLOW_ROOMS[]` | Allowed Room Tokens | `[]` (all) |
+| `NCT_ROOM_POLICY` | Room policy (open/mention) | `mention` |
 
 ### config.json Structure
+
+```json
+{
+  "channels": {
+    "nextcloud_talk": {
+      "enabled": true,
+      "baseUrl": "https://cloud.example.com",
+      "botSecret": "your-bot-secret-min-40-chars",
+      "webhookPath": "/webhook/nextcloud_talk",
+      "allowFrom": [
+        "volker",
+        "alice",
+        "bob"
+      ],
+      "allowRooms": [
+        "testtoken123",
+        "productionroom789"
+      ],
+      "roomPolicy": "mention"
+    }
+  }
+}
+```
+
+---
+
+## 🔌 Nextcloud Talk Setup
+
+### 1. Install Nextcloud Talk App
+
+Secure the Nextcloud Talk app (fallback if no current version available):
+
+```bash
+wget https://github.com/nextcloud/spreed/archive/refs/heads/master.zip -O /tmp/spreed.zip
+unzip /tmp/spreed.zip -d /tmp/
+```
+
+### 2. Create Bot Secret
+
+```bash
+# Secure bot secret creation (min. 40 characters)
+openssl rand -base64 48
+
+# Example: Xy8kL9mN3pQ4rS5tU6vW7xY8zA1bC2dE3fG4hI5jK6
+```
+
+### 3. Register Bot in Nextcloud
+
+```bash
+# On the Nextcloud server (in terminal):
+
+php occ talk:bot:install \
+  "Nanobot" \
+  "your-bot-secret-min-40-zeichen" \
+  "https://deine-domain.com/webhook/nextcloud_talk" \
+  --feature webhook \
+  --feature response
+
+# Install bot in a Room (token from Element / Talk client):
+
+php occ talk:bot:install-in-room "Nanobot" "<room-token>"
+```
+
+**IMPORTANT:**
+- The `bot_secret` must be at least 40 characters long
+- The `webhook_url` must be publicly accessible (ngrok, port-forward, reverse proxy)
+- Use `webhook` and `response` features for full functionality
+
+### 4. NGrok / Reverse Proxy Setup
+
+#### Option 1: NGrok (simple)
+
+```bash
+# Install NGrok (if not already installed)
+wget https://bin.equinox.io/c/bNyj1m1V4gg/ngrok-v3-stable-linux-amd64.tgz
+tar xzf ngrok-v3-stable-linux-amd64.tgz
+sudo mv ngrok /usr/local/bin/
+
+# Create tunnel
+ngrok http 18790
+
+# Output: https://abc123.ngrok.io
+```
+
+#### Option 2: Reverse Proxy (production-ready)
+
+**Nginx Example:**
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name cloud.example.com;
+
+    ssl_certificate /etc/ssl/certs/cloud.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/cloud.example.com.key;
+
+    location /webhook/nextcloud_talk {
+        proxy_pass http://localhost:18790/webhook/nextcloud_talk;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Webhook headers
+        proxy_set_header X-Nextcloud-Talk-Random $http_x_nextcloud_talk_random;
+        proxy_set_header X-Nextcloud-Talk-Signature $http_x_nextcloud_talk_signature;
+    }
+}
+```
+
+---
+
+## 📁 Workspace Files
+
+### 1. nextcloud-talk-config.json
+
+Example configuration at `${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json`:
 
 ```json
 {
@@ -99,164 +284,55 @@ sudo bash setup-nanobot.sh
 }
 ```
 
----
-
-## 🔌 Nextcloud Talk Setup
-
-### 1. Nextcloud Talk App installieren
-
-Sichere das Nextcloud Talk App:
-```bash
-# Fallback Image (falls keine aktuelle Version verfügbar)
-wget https://github.com/nextcloud/spreed/archive/refs/heads/master.zip -O /tmp/spreed.zip
-unzip /tmp/spreed.zip -d /tmp/
-```
-
-### 2. Bot Secret erstellen
-
-```bash
-# Sicheren Bot Secret erstellen (min. 40 Zeichen)
-openssl rand -base64 48
-
-# Beispiel: Xy8kL9mN3pQ4rS5tU6vW7xY8zA1bC2dE3fG4hI5jK6
-```
-
-### 3. Bot in Nextcloud registrieren
-
-```bash
-# Im Nextcloud Server (im Terminal):
-
-php occ talk:bot:install \
-  "Nanobot" \
-  "dein-bot-secret-min-40-zeichen" \
-  "https://deine-domain.com/webhook/nextcloud_talk" \
-  --feature webhook \
-  --feature response
-
-# Install bot in einer Room (Token aus Element / Talk Client):
-
-php occ talk:bot:install-in-room "Nanobot" "<room-token>"
-```
-
-**WICHTIG:**
-- Der `bot_secret` muss mindestens 40 Zeichen lang sein
-- Die `webhook_url` sollte öffentlich erreichbar sein (ngrok, port-forward, reverse proxy)
-- Nutze `webhook` und `response` Features für volle Funktionalität
-
-### 4. NGrok / Reverse Proxy einrichten
-
-#### Option 1: NGrok (einfach)
-
-```bash
-# Install NGrok (falls nicht vorhanden)
-wget https://bin.equinox.io/c/bNyj1m1V4gg/ngrok-v3-stable-linux-amd64.tgz
-tar xzf ngrok-v3-stable-linux-amd64.tgz
-sudo mv ngrok /usr/local/bin/
-
-# Tunnel erstellen
-ngrok http 18790
-
-# Ausgabe: https://abc123.ngrok.io
-```
-
-#### Option 2: Reverse Proxy (production-ready)
-
-**Nginx Beispiel:**
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name cloud.example.com;
-
-    ssl_certificate /etc/ssl/certs/cloud.example.com.crt;
-    ssl_certificate_key /etc/ssl/private/cloud.example.com.key;
-
-    location /webhook/nextcloud_talk {
-        proxy_pass http://localhost:18790/webhook/nextcloud_talk;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # Webhook Headers
-        proxy_set_header X-Nextcloud-Talk-Random $http_x_nextcloud_talk_random;
-        proxy_set_header X-Nextcloud-Talk-Signature $http_x_nextcloud_talk_signature;
-    }
-}
-```
-
----
-
-## 📁 Workspace-Dateien
-
-### 1. nextcloud-talk-config.json
-
-Beispiel-Konfiguration unter `${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json`:
-
-```json
-{
-  "channels": {
-    "nextcloud_talk": {
-      "enabled": true,
-      "baseUrl": "https://cloud.example.com",
-      "botSecret": "your-bot-secret-min-40-chars",
-      "webhookPath": "/webhook/nextcloud_talk",
-      "allowFrom": ["volker", "alice", "bob"],
-      "allowRooms": ["testtoken123", "productionroom789"],
-      "roomPolicy": "mention"
-    }
-  }
-}
-```
-
 ### 2. test-webhook.py
 
-Test-Skript für Webhook-Endpunkte:
+Test script for webhook endpoints:
 
 ```bash
-# Lokalen Test-Server starten
+# Start local test server
 python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py
 
-# Externen Gateway server testen
+# Test external gateway server
 python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py --test-external
 
-# Spezifischen Port nutzen
+# Use specific port
 python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py --port 18791
 ```
 
 ### 3. AGENTS.md / MEMORY.md
 
-Dokumentation für den Agenten:
+Documentation for the agent:
 
 ```markdown
 ## Nextcloud Talk Channel
-- Webhook-Pfad: /webhook/nextcloud_talk
-- Raum-Policy: mention
-- Zugriff: volker / testtoken123
-- Test-Skript: python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py --port 18790
-- Config-File: ${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json
+- Webhook Path: /webhook/nextcloud_talk
+- Room Policy: mention
+- Access: volker / testtoken123
+- Test Script: python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py --port 18790
+- Config File: ${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json
 ```
 
 ---
 
 ## 🔍 Debugging & Testing
 
-### 1. Webhook Test-Skript ausführen
+### 1. Run Webhook Test Script
 
 ```bash
-# Gateway läuft?
+# Is gateway running?
 cd /opt/nanobot && docker compose logs -f nanobot-gateway
 
-# Test-Skript starten
+# Start test script
 python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py
 ```
 
-### 2. Log-Dateien prüfen
+### 2. Check Log Files
 
 ```bash
-# Gateway Logs
+# Gateway logs
 tail -f /var/log/nanobot-setup.log
 
-# Docker Logs
+# Docker logs
 docker logs nanobot-gateway | grep nextcloud_talk
 ```
 
@@ -273,7 +349,7 @@ docker exec nanobot-redis redis-cli -h 127.0.0.1 -p 6379 ping
 ### 4. Connection Test
 
 ```bash
-# Webhook URL testen (curl)
+# Test webhook URL (curl)
 curl -X POST http://localhost:18790/webhook/nextcloud_talk \
   -H "Content-Type: application/json" \
   -H "X-Nextcloud-Talk-Random: <random_value>" \
@@ -291,9 +367,9 @@ curl -X POST http://localhost:18790/webhook/nextcloud_talk \
 
 ---
 
-## 📋 Beispielkonfiguration
+## 📋 Example Configuration
 
-### Vollständiger Setup-Ablauf (DE/EN)
+### Complete Setup Flow (DE/EN)
 
 ```bash
 $ sudo bash setup-nanobot.sh
@@ -307,9 +383,9 @@ $ sudo bash setup-nanobot.sh
 
  Auswahl [1]: 1
 
-╔══════════════════════════════════════════════════════════════╗
-║       NANOBOT STACK v3.0.0 (Sprachauswahl) – SETUP ABGESCHLOSSEN ║
-╚══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════╗
+║       NANOBOT STACK v3.0.0 – SETUP ABGESCHLOSSEN ║
+╚══════════════════════════════════════╝
 
   Agent:  NanobotAgent für Volker aus Berlin
   Modell: google/gemini-2.0-flash-thinking-exp:free
@@ -327,7 +403,7 @@ $ sudo bash setup-nanobot.sh
   Config: /opt/nanobot/data/config.json
 ```
 
-### Nextcloud Talk Konfiguration
+### Nextcloud Talk Configuration
 
 ```bash
 $ sudo bash setup-nanobot.sh --resume-from 0
@@ -379,9 +455,9 @@ $ sudo bash setup-nanobot.sh --resume-from 0
 
   CORRECT? (y/n): y
 
-╔══════════════════════════════════════════════════════════════╗
-║       NANOBOT STACK v3.0.0 (Sprachauswahl) – SETUP ABGESCHLOSSEN ║
-╚══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════╗
+║       NANOBOT STACK v3.0.0 – SETUP ABGESCHLOSSEN ║
+╚══════════════════════════════════════╝
 
   Nextcloud Talk: https://cloud.example.com (3 Benutzer, 2 Räume)
 
@@ -391,69 +467,69 @@ $ sudo bash setup-nanobot.sh --resume-from 0
 
 ---
 
-## ❓ Problembehandlung
+## ❓ Troubleshooting
 
-### Problem: "401 Unauthorized" beim Webhook
+### Problem: "401 Unauthorized" on Webhook
 
-**Ursache:** HMAC-Signatur-Validierung fehlgeschlagen
+**Cause:** HMAC signature validation failed
 
-**Lösung:**
+**Solution:**
 ```bash
-# 1. Bot Secret prüfen
+# 1. Check bot secret
 cat ${NANOBOT_DATA_DIR}/workspace/nextcloud-talk-config.json | grep botSecret
 
-# 2. NGrok Tunnel öffnen
+# 2. Open ngrok tunnel
 ngrok http 18790
 
-# 3. Signature neu berechnen
+# 3. Recalculate signature
 openssl rand -base64 48  # -> Bot Secret
 
-# 4. Webhook Test ausführen
+# 4. Run webhook test
 python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py
 ```
 
-### Problem: "Bot Secret zu kurz"
+### Problem: "Bot Secret too short"
 
-**Ursache:** Mindestens 40 Zeichen erforderlich
+**Cause:** Minimum 40 characters required
 
-**Lösung:**
+**Solution:**
 ```bash
-# Sicheren Secret erstellen
+# Create secure secret
 openssl rand -base64 48
 
-# Fallback: manuell generieren
+# Fallback: manually generate
 cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 48 | head -n 1
 ```
 
 ### Problem: "Cannot connect to Nextcloud"
 
-**Ursache:** NGrok Tunnel oder URL fehlerhaft
+**Cause:** ngrok tunnel or URL incorrect
 
-**Lösung:**
+**Solution:**
 ```bash
-# 1. NGrok Tunnel checken
+# 1. Check ngrok tunnel
 ngrok http 18790
 
-# 2. URL gültig?
+# 2. Validate URL
 curl -I https://cloud.example.com
 
-# 3. Webhook-URL korrigieren
+# 3. Correct webhook URL
 # config.json → nextcloud_talk → webhookPath
 ```
 
-### Problem: "Webhook nicht empfangen"
+### Problem: "Webhook not received"
 
-**Ursache:** Gateway nicht gestartet oder falscher Port
+**Cause:** Gateway not started or incorrect port
 
-**Lösung:**
+**Solution:**
 ```bash
-# 1. Gateway starten
+# 1. Start gateway
 cd /opt/nanobot && docker compose up -d
 
-# 2. Gateway Logs
+# 2. Gateway logs
 docker logs nanobot-gateway -f
 
-# 3. Port checken
+# 3. Check port
 docker ps | grep nanobot-gateway
 
 # 4. Healthcheck
@@ -462,34 +538,50 @@ curl http://127.0.0.1:18790/health
 
 ### Problem: "Message not handled"
 
-**Ursache:** Raum-Policy oder erlaubte Rooms falsch konfiguriert
+**Cause:** Room policy or allowed rooms incorrectly configured
 
-**Lösung:**
+**Solution:**
 ```bash
-# 1. Raum-Policy checken
+# 1. Check room policy
 cat ${NANOBOT_DATA_DIR}/config.json | grep roomPolicy
 
-# 2. Kommunikationstoken im Element Client kopieren
-#   Rechtsklick → Room → Copy Address
+# 2. Copy communication token from Element Client
+#   Right-click → Room → Copy Address
 
-# 3. config.json allowRooms aktualisieren
+# 3. Update config.json allowRooms
 # config.json → channels → nextcloud_talk → allowRooms
 
-# 4. Gateway neustarten
+# 4. Restart gateway
 docker compose restart nanobot-gateway
+```
+
+### Problem: Variable Naming Inconsistency
+
+**Cause:** Mixed variable names in code
+
+**Solution:**
+```bash
+# Check all references are consistent
+grep "NCT_URL" setup-nanobot.sh
+grep "NC_TALK_" setup-nanobot.sh
+
+# All should use NCT_* prefix
+# except:
+# - NC_TALK_BOTSECRET (specific variable name)
+# - NC_TALK_WEBHOOKPATH (specific variable name)
 ```
 
 ---
 
-## 🔗 Ressourcen
+## 🔗 Resources
 
-### Offizielle Dokumentation
+### Official Documentation
 
 - [Nextcloud Talk Bot Webhook API](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/webhook.html)
 - [NGrok Tunnel](https://ngrok.com/docs)
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
 
-### Repositorys
+### Repositories
 
 - [nanobot-nextcloud-talk-channel](https://github.com/volkergrabbe/nanobot-nextcloud-talk-channel)
 - [nanobot-setup](https://github.com/volkergrabbe/nanobot-setup)
@@ -506,13 +598,49 @@ docker compose restart nanobot-gateway
 
 ### v3.0.0 (2026-02-24)
 
-- ✅ Neue Funktion `collect_nextcloud_talk()` (Phase 0c)
-- ✅ Workspace-Dateien: `nextcloud-talk-config.json` & `test-webhook.py`
-- ✅ config.json Block für `nextcloud_talk` Channel
-- ✅ Dokumentation in `AGENTS.md` & `MEMORY.md`
-- ✅ HMAC-Signatur-Validierung integriert
-- ✅ Raum-Policy (open/mention) unterstützt
+- ✅ New `collect_nextcloud_talk()` function (Phase 0c)
+- ✅ Workspace files: `nextcloud-talk-config.json` & `test-webhook.py`
+- ✅ config.json block for `nextcloud_talk` channel
+- ✅ Documentation in `AGENTS.md` & `MEMORY.md`
+- ✅ HMAC signature validation integrated
+- ✅ Room policy (open/mention) supported
+- ✅ Fixed variable naming inconsistency (NC_TALK_* → NCT_*)
+- ✅ Fixed config.json array structure
+
+### Known Issues
+
+- None currently identified
 
 ---
 
-*Stand: 2026-02-24 | Version: v3.0.0 | Author: Volker Grabbe*
+## 🎯 Next Steps
+
+1. **Test the Integration:**
+   ```bash
+   sudo bash setup-nanobot.sh --resume-from 0
+   ```
+
+2. **Configure Nextcloud Talk:**
+   ```bash
+   # Register bot in Nextcloud
+   php occ talk:bot:install ...
+   ```
+
+3. **Set Up ngrok:**
+   ```bash
+   ngrok http 18790
+   ```
+
+4. **Test Webhook:**
+   ```bash
+   python3 ${NANOBOT_DATA_DIR}/workspace/test-webhook.py
+   ```
+
+5. **Monitor Logs:**
+   ```bash
+   docker logs nanobot-gateway -f
+   ```
+
+---
+
+*Last Updated: 2026-02-24 | Version: v3.0.0 | Author: Volker Grabbe*
